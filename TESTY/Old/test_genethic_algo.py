@@ -13,7 +13,6 @@ population_size = 100
 features = 30
 num_of_generations = 2
 
-
 # FUNKCJA DO PRZYGOTOWANIA DANYCH (ZEBY BYLO PEWNIEJ POWINIENEM SPRAWDZAC CZY DANE MAJA OUTLIERY I DOBIERAC WTEDY ALBO MEAN() ALBO MEDIAN())
 # JESZCZE PRZEMYSLEC ROZNE PRZYPADKI!!!!
 def prepare_data(path):
@@ -36,18 +35,13 @@ def initialize_population(population_size, num_features):
     return population
 
 # STEP 2: Fitness Function
-
-def fitness(features):
+def fitness(features, classifier, X_train, y_train, X_test, y_test):
    feature_mask = features.astype(bool)
-   X_train_subset = X_train_v4.loc[:, feature_mask]
-   #X_train_subset = X_train_subset.to_numpy() TEST Z NUMPY
-   #print(X_train_subset)
-   X_test_subset = X_test_v4.loc[:, feature_mask]
-   #X_test_subset = X_test_subset.to_numpy() TEST Z NUMPY
-   #print(X_test_subset)
-   gbc.fit(X_train_subset, y_train_v4)
-   preds = gbc.predict(X_test_subset)
-   f1_score_subset = round(f1_score(y_test_v4, preds, average='weighted'), 3)
+   X_train_subset = X_train.loc[:, feature_mask]
+   X_test_subset = X_test.loc[:, feature_mask]
+   classifier.fit(X_train_subset, y_train)
+   preds = classifier.predict(X_test_subset)
+   f1_score_subset = round(f1_score(y_test, preds, average='weighted'), 3)
 # Update best individual if current individual is better
    global best_individual, best_fitness_score
    if f1_score_subset > best_fitness_score:
@@ -70,7 +64,6 @@ def selection_roulette(population, population_size, output_prob):
     print(selected_population)
     return selected_population
 
-# SPRAWDZIC BO COS NIE TAK
 def selection_tournament(population, tournament_size, fitness_score_dict):
     num_of_tournaments = len(population)//tournament_size
     print("Number of tournament:", num_of_tournaments)
@@ -120,10 +113,27 @@ def mutation(next_gen, selected_population):
 
 
 def run_genethic_algo(population_size, num_of_generations, features):
+    global best_fitness_score
+    global best_individual
+    best_individual = None
+    best_fitness_score = 0
+     
+    data = prepare_data("Breast Cancer/data.csv")
+    X = data.drop(['id','diagnosis'] , axis=1)
+    y = data['diagnosis']
+
+    X_train, X_test, y_train, y_test = train_test_split(X,
+                                                   y,
+                                                   test_size=0.3,
+                                                   random_state=42)
+    # Initialize classifier
+    classifier = GradientBoostingClassifier(random_state=42)
+
     population = initialize_population(population_size, features)
+
     for i in range (num_of_generations):
         print("Fitness calculation !")
-        fitness_scores_list = [fitness(features) for features in tqdm(population, desc='Fitness Score Calculation Progress', colour = "green", leave=True)]
+        fitness_scores_list = [fitness(features, classifier, X_train, y_train, X_test, y_test) for features in tqdm(population, desc='Fitness Score Calculation Progress', colour = "green", leave=True)]
         fitness_scores_dict = {i + 1: score for i, score in enumerate(fitness_scores_list)}
         print("\nNajlepszy wynik dla generacji nr :", i+1 , "to :", max(fitness_scores_list))
         fitness_scores_sum = sum(fitness_scores_list)
@@ -134,31 +144,13 @@ def run_genethic_algo(population_size, num_of_generations, features):
         next_gen = uniform_crossover(selected_population, population_size)
         next_gen_mutated = mutation(next_gen, selected_population)
         population = next_gen_mutated
+        print("Najlepszy fitness score", best_fitness_score)
 
+    get_best_score(X_train)
+
+def get_best_score(X_train):
     print("Best individual:", best_individual)
     print("Best fitness score:", best_fitness_score)
     mask = best_individual.astype(bool)
-    final = X_train_v4.loc[:, mask]
+    final = X_train.loc[:, mask]
     print(final.columns)
-
-
-best_individual = None
-best_fitness_score = 0
-
-data = prepare_data("Breast Cancer/data.csv")
-
-X = data.drop(['id','diagnosis'] , axis=1)
-y = data['diagnosis']
-num_of_features = len(X.columns)
-
-X_train, X_test, y_train, y_test = train_test_split(X,
-                                                   y,
-                                                   test_size=0.3,
-                                                   random_state=42)
-
-# Initialize classifier
-gbc = RandomForestClassifier(random_state=42)  # Dla problemu klasyfikacji
-
-X_train_v4, X_test_v4, y_train_v4, y_test_v4 = X_train.copy(), X_test.copy(), y_train.copy(), y_test.copy()
-
-run_genethic_algo(population_size=10, num_of_generations=50, features=num_of_features)
