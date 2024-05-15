@@ -8,7 +8,7 @@ from sklearn.metrics import f1_score, mean_squared_error
 from itertools import accumulate
 import operator
 
-data = pd.read_csv("Breast Cancer/data.csv")
+data = pd.read_csv("/Users/patrykjaworski/Documents/Projekty/Feature-Selection/TESTY/Old/data.csv")
 data = data.loc[:, ~data.columns.str.contains('^Unnamed')]
 
 #Dzielimy dane na uczące i testowe 

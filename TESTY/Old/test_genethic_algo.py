@@ -118,7 +118,7 @@ def run_genethic_algo(population_size, num_of_generations, features):
     best_individual = None
     best_fitness_score = 0
      
-    data = prepare_data("Breast Cancer/data.csv")
+    data = prepare_data("/Users/patrykjaworski/Documents/Projekty/Feature-Selection/TESTY/Old/data.csv")
     X = data.drop(['id','diagnosis'] , axis=1)
     y = data['diagnosis']
 
@@ -154,3 +154,5 @@ def get_best_score(X_train):
     mask = best_individual.astype(bool)
     final = X_train.loc[:, mask]
     print(final.columns)
+
+run_genethic_algo(30,20,30)

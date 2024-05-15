@@ -1,4 +1,3 @@
-#Dokumentacja, logowanie, testy wyjątki
 import pandas as pd
 from pandas.api.types import is_object_dtype, is_numeric_dtype
 import seaborn as sns
@@ -54,14 +53,14 @@ class FilterMethods:
         precision_gbc = round(precision_score(Y_test, preds_gbc), 3)
         recall_gbc = round(recall_score(Y_test, preds_gbc), 3)
         f1_gbc = round(f1_score(Y_test, preds_gbc, average='weighted'), 3)
-        metrics['GradientBoost'] = {'accuracy': accuracy_gbc, 'precision': precision_gbc, 'recall': recall_gbc, 'f1_score': f1_gbc}
+        metrics['GradientBoost'] = {'features': X_train.columns, 'accuracy': accuracy_gbc, 'precision': precision_gbc, 'recall': recall_gbc, 'f1_score': f1_gbc}
         print(f"Gradient boost Classifier: accuracy: {accuracy_gbc}, precision: {precision_gbc}, recall: {recall_gbc}, f1_score: {f1_gbc}")
 
         accuracy_rfc = round(accuracy_score(Y_test, preds_rfc), 3)
         precision_rfc = round(precision_score(Y_test, preds_rfc), 3)
         recall_rfc = round(recall_score(Y_test, preds_rfc), 3)
         f1_rfc = round(f1_score(Y_test, preds_rfc, average='weighted'), 3)
-        metrics['RandomForest'] = {'accuracy': accuracy_rfc, 'precision': precision_rfc, 'recall': recall_rfc, 'f1_score': f1_rfc}
+        metrics['RandomForest'] = {'features': X_train.columns, 'accuracy': accuracy_rfc, 'precision': precision_rfc, 'recall': recall_rfc, 'f1_score': f1_rfc}
         print(f"Random Forest Classifier: accuracy: {accuracy_rfc}, precision: {precision_rfc}, recall: {recall_rfc}, f1_score: {f1_rfc}")
 
         return metrics
@@ -77,12 +76,16 @@ class FilterMethods:
         fig.write_html(filename)
 
     def variance_threshold_method(self, X_train, Y_train, X_test, Y_test, threshold: float) -> dict:
+        scaler = MinMaxScaler()
+        scaled_X_train = scaler.fit_transform(X_train)
+        X_train_copy = X_train.copy()
+        X_train_copy[:] = scaled_X_train
         var_threshold = VarianceThreshold(threshold=threshold)
-        var_threshold.fit(X_train)
+        var_threshold.fit(X_train_copy)
         # Get the indices of non-constant columns
         constant_columns_indices = [i for i, var in enumerate(var_threshold.get_support()) if not var]
         # Get the names of constant columns
-        constant_columns = X_train.columns[constant_columns_indices]
+        constant_columns = X_train_copy.columns[constant_columns_indices]
         # Print or use the constant column names
         print(constant_columns)
         X_train = X_train.drop(columns = constant_columns)
@@ -99,14 +102,14 @@ class FilterMethods:
         precision_gbc = round(precision_score(Y_test, preds_gbc), 3)
         recall_gbc = round(recall_score(Y_test, preds_gbc), 3)
         f1_gbc = round(f1_score(Y_test, preds_gbc, average='weighted'), 3)
-        metrics['GradientBoost'] = {'accuracy': accuracy_gbc, 'precision': precision_gbc, 'recall': recall_gbc, 'f1_score': f1_gbc}
+        metrics['GradientBoost'] = {'features': X_train.columns, 'accuracy': accuracy_gbc, 'precision': precision_gbc, 'recall': recall_gbc, 'f1_score': f1_gbc}
         print(f"Gradient boost Classifier: accuracy: {accuracy_gbc}, precision: {precision_gbc}, recall: {recall_gbc}, f1_score: {f1_gbc}")
 
         accuracy_rfc = round(accuracy_score(Y_test, preds_rfc), 3)
         precision_rfc = round(precision_score(Y_test, preds_rfc), 3)
         recall_rfc = round(recall_score(Y_test, preds_rfc), 3)
         f1_rfc = round(f1_score(Y_test, preds_rfc, average='weighted'), 3)
-        metrics['RandomForest'] = {'accuracy': accuracy_rfc, 'precision': precision_rfc, 'recall': recall_rfc, 'f1_score': f1_rfc}
+        metrics['RandomForest'] = {'features':X_train.columns, 'accuracy': accuracy_rfc, 'precision': precision_rfc, 'recall': recall_rfc, 'f1_score': f1_rfc}
         print(f"Random Forest Classifier: accuracy: {accuracy_rfc}, precision: {precision_rfc}, recall: {recall_rfc}, f1_score: {f1_rfc}")
 
         return metrics
@@ -128,6 +131,8 @@ class FilterMethods:
                 if abs(corr_matrix.iloc[i,j]) > corr_thresh:
                     colname = corr_matrix.columns[i]
                     highly_correlated.add(colname)
+
+        print("HIGHLY CORRELATED:", highly_correlated)
 
         X_train = X_train.drop(columns=highly_correlated)
         X_test = X_test.drop(columns=highly_correlated)
@@ -217,3 +222,18 @@ class FilterMethods:
 
         fig_recall = px.bar(df_recall, x="Feature_Num", y="Recall", color="Feature_Num", title="Recall vs Feature Number")
         fig_recall.write_html()
+
+
+instance = FilterMethods()
+data = instance.prepare_data("/Users/patrykjaworski/Documents/Projekty/Feature-Selection/TESTY/Old/data.csv")
+X, Y, X_train, X_test, y_train, y_test = instance.split_data(data, "diagnosis")
+print(instance.occurence_of_classes(data, "diagnosis"))
+instance.plot_correlation(X, "correlation.png")
+instance.basic_classification(X_train, y_train, X_test, y_test)
+instance.correlation_method(data, X_train, y_train, X_test, y_test, threshold=1)
+
+
+# basic_classification_metrics = instance.basic_classification(X_train, y_train, X_test, y_test)
+# var_classification_metrics = instance.variance_threshold_method(X_train, y_train, X_test, y_test, 0.02)
+# print(f"Basic classification metrics: \n{basic_classification_metrics}\n")
+# print(f"Variation threshold classification metrics:\n{var_classification_metrics}\n")

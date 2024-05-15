@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QMainWindow, QPushButton, QLabel
 from PyQt6.QtCore import Qt, QSize, QThread, QObject, pyqtSignal
-from Old.test_genethic_algo import run_genethic_algo
+from test_genethic_algo import run_genethic_algo
 import pyqtgraph as pg
 import sys
 
