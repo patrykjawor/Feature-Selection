@@ -192,36 +192,33 @@ class FilterMethods:
         precision_list = pd.Series(precision_list)
         recall_list = pd.Series(recall_list)
 
-        # Create a DataFrame for visualization
         df_f1 = pd.DataFrame({'Feature_Num': range(1, len(X_train.columns) + 1), 'F1_Score': f1_score_list})
-        df_f1['Feature_Num'] = df_f1['Feature_Num'].astype(int)  # Convert to integers
+        df_f1['Feature_Num'] = df_f1['Feature_Num'].astype(int)
         df_f1 = df_f1.sort_values(by="F1_Score", ascending=True)
 
         df_accuracy = pd.DataFrame({'Feature_Num': range(1, len(X_train.columns) + 1), 'Accuracy': accuracy_list})
-        df_accuracy['Feature_Num'] = df_accuracy['Feature_Num'].astype(int)  # Convert to integers
+        df_accuracy['Feature_Num'] = df_accuracy['Feature_Num'].astype(int)
         df_accuracy = df_accuracy.sort_values(by="Accuracy", ascending=True)
 
         df_precision = pd.DataFrame({'Feature_Num': range(1, len(X_train.columns) + 1), 'Precision': precision_list})
-        df_precision['Feature_Num'] = df_precision['Feature_Num'].astype(int)  # Convert to integers
+        df_precision['Feature_Num'] = df_precision['Feature_Num'].astype(int)
         df_precision = df_precision.sort_values(by="Precision", ascending=True)
 
         df_recall = pd.DataFrame({'Feature_Num': range(1, len(X_train.columns) + 1), 'Recall': precision_list})
-        df_recall['Feature_Num'] = df_recall['Feature_Num'].astype(int)  # Convert to integers
+        df_recall['Feature_Num'] = df_recall['Feature_Num'].astype(int)
         df_recall = df_recall.sort_values(by="Recall", ascending=True)
 
-        # Plot the F1 scores
         fig_f1 = px.bar(df_f1, x="Feature_Num", y="F1_Score", color="Feature_Num", title="F1 Scores vs Feature Number")
-        fig_f1.write_html()
+        fig_f1.write_html("f1_score_mutual_info.html")
 
-        # Plot the accuracy scores
         fig_accuracy = px.bar(df_accuracy, x="Feature_Num", y="Accuracy", color="Feature_Num", title="Accuracy vs Feature Number")
-        fig_accuracy.write_html()
+        fig_accuracy.write_html("accuracy_mutual_info.html")
 
         fig_precision = px.bar(df_precision, x="Feature_Num", y="Precision", color="Feature_Num", title="Precision vs Feature Number")
-        fig_precision.write_html()
+        fig_precision.write_html("precision_mutual_info.html")
 
         fig_recall = px.bar(df_recall, x="Feature_Num", y="Recall", color="Feature_Num", title="Recall vs Feature Number")
-        fig_recall.write_html()
+        fig_recall.write_html("recall_mutual_info.html")
 
 
 instance = FilterMethods()

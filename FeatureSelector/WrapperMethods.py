@@ -2,7 +2,8 @@ import pandas as pd
 from pandas.api.types import is_object_dtype, is_numeric_dtype
 import numpy as np
 from tqdm import tqdm
-from sklearn.model_selection import train_test_split
+from plotly.express import line
+from sklearn.model_selection import train_test_split, cross_val_score, cross_val_predict
 from sklearn.feature_selection import mutual_info_classif
 from sklearn import preprocessing
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
@@ -10,13 +11,16 @@ from sklearn.metrics import f1_score, accuracy_score, precision_score, recall_sc
 from numba import jit
 from itertools import accumulate
 import operator
-
+import matplotlib.pyplot as plt
+import networkx as nx
+import json
+from timeit import default_timer as timer
 
 class WrapperMethods:
     def __init__(self) -> None:
         self.gbc = GradientBoostingClassifier()
         self.rfc = RandomForestClassifier()
-        self.rng = np.random.default_rng(seed=25)
+        self.rng = np.random.default_rng()
         
     def prepare_data(self, filepath: str) -> pd.DataFrame:
         data = pd.read_csv(filepath_or_buffer=filepath)
@@ -35,10 +39,9 @@ class WrapperMethods:
     def split_data(self, data: pd.DataFrame, target_col: str) -> tuple:
         X = data.drop(['id', target_col], axis=1)
         Y = data[target_col]
-        X_train, X_test, y_train, y_test = train_test_split(X, Y, test_size=0.3, random_state=42)
-        return X, Y, X_train, X_test, y_train, y_test
+        return X, Y
 
-    def forward_selection_method(self, X_train, X_test, Y_train, Y_test) -> tuple:
+    def forward_selection_method(self, X, Y) -> tuple:
         best_features_rfc, best_features_gbc = set(), set()
         metrics = {}
         f1_score_gbc_best = 0
@@ -47,22 +50,21 @@ class WrapperMethods:
         f1_rfc_list = []
         gbc_score_improvement = []
         rfc_score_improvement = []
-        features_mask_gbc = np.zeros(X_train.shape[1], dtype=bool)
-        features_mask_rfc = np.zeros(X_train.shape[1], dtype=bool)
+        features_mask_gbc = np.zeros(X.shape[1], dtype=bool)
+        features_mask_rfc = np.zeros(X.shape[1], dtype=bool)
         num_features_selected = 0
 
-        while num_features_selected < len(X_train.columns):
+        start = timer()
+        while num_features_selected < X.shape[1]:
 
-            for i in range(X_train.shape[1]):
+            for i in range(X.shape[1]):
                 if not features_mask_gbc[i]:
                     features_mask_gbc[i] = True
 
-                    X_train_subset = X_train.iloc[:, features_mask_gbc]
-                    X_test_subset = X_test.iloc[:, features_mask_gbc]
-
-                    self.gbc.fit(X_train_subset, Y_train)
-                    preds_gbc = self.gbc.predict(X_test_subset)
-                    f1_gbc_subset = round(f1_score(Y_test, preds_gbc, average='weighted'), 3)
+                    X_subset = X.iloc[:, features_mask_gbc]
+                    f1_gbc_subset = np.mean(cross_val_score(self.gbc, X_subset, Y, cv=5, scoring='f1_weighted'))
+                    print("F1_GBC_SUBSET:", f1_gbc_subset)
+                    
                     f1_gbc_list.append(f1_gbc_subset)
                     features_mask_gbc[i] = False
                 else:
@@ -71,13 +73,12 @@ class WrapperMethods:
                 if not features_mask_rfc[i]:
                     features_mask_rfc[i] = True
 
-                    X_train_subset = X_train.iloc[:, features_mask_rfc]
-                    X_test_subset = X_test.iloc[:, features_mask_rfc]
+                    X_subset = X.iloc[:, features_mask_rfc]
 
-                    self.rfc.fit(X_train_subset, Y_train)
-                    preds_rfc = self.rfc.predict(X_test_subset)
-                    f1_rfc_subset = round(f1_score(Y_test, preds_rfc, average='weighted'), 3)
+                    f1_rfc_subset = np.mean(cross_val_score(self.rfc, X_subset, Y, cv=5, scoring='f1_weighted'))
+                    print("F1_RFC_SUBSET:", f1_rfc_subset)
                     f1_rfc_list.append(f1_rfc_subset)
+
                     features_mask_rfc[i] = False
                 else:
                     f1_rfc_list.append(-1) # That means it was previously present
@@ -85,33 +86,66 @@ class WrapperMethods:
             if max(f1_gbc_list) >= f1_score_gbc_best or max(f1_rfc_list) >= f1_score_rfc_best:
 
                 if max(f1_gbc_list) >= f1_score_gbc_best:
-                    print(f"Best score gbc:, {max(f1_gbc_list)}, feature name:{X_train.columns[np.argmax(f1_gbc_list)]}")
-                    best_features_gbc.add(X_train.columns[np.argmax(f1_gbc_list)])
-                    gbc_score_improvement.append((max(f1_gbc_list), best_features_gbc))
+                    print(f"Best score gbc:, {max(f1_gbc_list)}, feature name:{X.columns[np.argmax(f1_gbc_list)]}")
+                    best_features_gbc.add(X.columns[np.argmax(f1_gbc_list)])
+                    gbc_score_improvement.append((max(f1_gbc_list), set(best_features_gbc)))
+                    print(f"Current best feautures gbc:{best_features_gbc}\n\n")
                     features_mask_gbc[np.argmax(f1_gbc_list)] = True
                     f1_score_gbc_best = max(f1_gbc_list)
+                else:
+                    print("No improvement in GBC!")
 
                 if max(f1_rfc_list) >= f1_score_rfc_best:
-                    print(f"Best score rfc: {max(f1_rfc_list)}, feature name:{X_train.columns[np.argmax(f1_rfc_list)]}")
-                    best_features_rfc.add(X_train.columns[np.argmax(f1_rfc_list)])
-                    rfc_score_improvement.append((max(f1_rfc_list), best_features_rfc))
+                    print(f"Best score rfc: {max(f1_rfc_list)}, feature name:{X.columns[np.argmax(f1_rfc_list)]}")
+                    best_features_rfc.add(X.columns[np.argmax(f1_rfc_list)])
+                    rfc_score_improvement.append((max(f1_rfc_list), set(best_features_rfc)))
+                    print(f"Current best feautures rfc:{best_features_rfc}\n\n")
                     features_mask_rfc[np.argmax(f1_rfc_list)] = True
                     f1_score_rfc_best = max(f1_rfc_list)
+                else:
+                    print("No improvement in RFC!")
                 
                 f1_gbc_list.clear()
                 f1_rfc_list.clear()
                 num_features_selected += 1
             else:
                 print("No improvements between previous score!")
+                end = timer()
+                print(f"Feature selection took: {end-start} s.")
                 break
+
+        progress_gbc = {
+            "f1_score_gbc": [score for score, _ in gbc_score_improvement],
+            "features_num": [len(features) for _, features in gbc_score_improvement],
+            "features_gbc": [str(features) for _, features in gbc_score_improvement],
+        }
+
+        progress_rfc = {
+            "f1_score_rfc": [score for score, _ in rfc_score_improvement],
+            "features_num": [len(features) for _, features in rfc_score_improvement],
+            "features_rfc": [str(features) for _, features in rfc_score_improvement],
+
+        }
+
+        df_gbc = pd.DataFrame(data=progress_gbc)
+        df_rfc = pd.DataFrame(data=progress_rfc)
+        df_gbc.index += 1
+        df_rfc.index += 1
+
+        fig = line(df_gbc["f1_score_gbc"], title='Fitness forward selection over iterations')
+        fig.write_html("fitness_forward_selection.html")
+
+        with pd.ExcelWriter('progress_forward_selection.xlsx') as writer:  
+            df_gbc.to_excel(writer, sheet_name='GBC')
+            df_rfc.to_excel(writer, sheet_name='RFC')
 
         metrics["GradientBoostClassifier"] = {"features" : best_features_gbc, "F1": f1_score_gbc_best}
         metrics["RandomForestClassifier"] = {"features": best_features_rfc, "F1": f1_score_rfc_best}
 
         return metrics, gbc_score_improvement, rfc_score_improvement
     
-    def backward_elimination_method(self, X_train, X_test, Y_train, Y_test):
-        best_features_rfc, best_features_gbc = set(X_train.columns), set(X_train.columns)
+    def backward_elimination_method(self, X, Y):
+        best_features_rfc, best_features_gbc = set(X.columns), set(X.columns)
         metrics = {}
         f1_score_gbc_current_best = 0
         f1_score_rfc_current_best = 0
@@ -119,32 +153,24 @@ class WrapperMethods:
         f1_rfc_list = []
         gbc_score_improvement = []
         rfc_score_improvement = []
-        features_mask_gbc = np.zeros(X_train.shape[1], dtype=bool)
-        features_mask_rfc = np.zeros(X_train.shape[1], dtype=bool)
-        num_features_selected = len(X_test.columns)
+        features_mask_gbc = np.ones(X.shape[1], dtype=bool)
+        features_mask_rfc = np.ones(X.shape[1], dtype=bool)
+        num_features_selected = len(X.columns)
 
-        self.gbc.fit(X_train, Y_train)
-        self.rfc.fit(X_train, Y_train)
+        f1_score_gbc_current_best = np.mean(cross_val_score(self.gbc, X, Y, cv=5, scoring='f1_weighted'))
+        f1_score_rfc_current_best = np.mean(cross_val_score(self.rfc, X, Y, cv=5, scoring='f1_weighted'))
 
-        preds_gbc = self.gbc.predict(X_test)
-        preds_rfc = self.rfc.predict(X_test)
-
-        f1_score_gbc_current_best = round(f1_score(Y_test, preds_gbc, average='weighted'), 3)
-        f1_score_rfc_current_best = round(f1_score(Y_test, preds_rfc, average='weighted'), 3)
-
+        start = timer()
         while num_features_selected > 0:
-            for i in range(X_train.shape[1]):
+            for i in range(X.shape[1]):
                 if features_mask_gbc[i]:
                     features_mask_gbc[i] = False
 
-                    X_train_subset = X_train.loc[:, features_mask_gbc]
-                    X_test_subset = X_test.loc[:, features_mask_gbc]
+                    X_subset = X.iloc[:, features_mask_gbc]
 
-                    self.gbc.fit(X_train_subset, Y_train)
-                    preds_gbc = self.gbc.predict(X_test_subset)
-                    f1_gbc_subset = round(f1_score(Y_test, preds_gbc, average='weighted'), 3)
+                    f1_gbc_subset = np.mean(cross_val_score(self.gbc, X_subset, Y, cv=5, scoring='f1_weighted'))
+                    print(f"GBC_SUBSET:{f1_gbc_subset}")
                     f1_gbc_list.append(f1_gbc_subset)
-                    print("f1 gbc subset:", f1_gbc_subset)
 
                     features_mask_gbc[i] = True
                 else:
@@ -153,34 +179,30 @@ class WrapperMethods:
                 if features_mask_rfc[i]:
                     features_mask_rfc[i] = False
 
-                    X_train_subset = X_train.loc[:, features_mask_rfc]
-                    X_test_subset = X_test.loc[:, features_mask_rfc]
-
-                    self.rfc.fit(X_train_subset, Y_train)
-                    preds_rfc = self.rfc.predict(X_test_subset)
-                    f1_rfc_subset = round(f1_score(Y_test, preds_rfc, average='weighted'), 3)
+                    X_subset = X.iloc[:, features_mask_rfc]
+ 
+                    f1_rfc_subset = np.mean(cross_val_score(self.gbc, X_subset, Y, cv=5, scoring='f1_weighted'))
+                    print(f"RFC_SUBSET:{f1_rfc_subset}")
                     f1_rfc_list.append(f1_rfc_subset)
-                    print("f1 rfc subset:", f1_rfc_subset)
 
                     features_mask_rfc[i] = True
                 else:
-
                     f1_rfc_list.append(-1) # That means it was removed already
 
             if max(f1_gbc_list) >= f1_score_gbc_current_best or max(f1_rfc_list) >= f1_score_rfc_current_best:
                 if max(f1_gbc_list) >= f1_score_gbc_current_best:
-                    print("Best score gbc:", max(f1_gbc_list), X_train.columns[np.argmax(f1_gbc_list)])
-                    best_features_gbc.remove(X_train.columns[np.argmax(f1_gbc_list)])
-                    gbc_score_improvement.append((max(f1_gbc_list), best_features_gbc))
-                    print("Best features gbc:", best_features_gbc)
+                    print("Best score gbc:", max(f1_gbc_list), X.columns[np.argmax(f1_gbc_list)])
+                    best_features_gbc.remove(X.columns[np.argmax(f1_gbc_list)])
+                    gbc_score_improvement.append((max(f1_gbc_list), set(best_features_gbc)))
+                    print(f"Current best features gbc: {best_features_gbc}\n", )
                     features_mask_gbc[np.argmax(f1_gbc_list)] = False
                     f1_score_gbc_current_best = max(f1_gbc_list)
                     
                 if max(f1_rfc_list) >= f1_score_rfc_current_best:
-                    print("Best score rfc:", max(f1_rfc_list), X_train.columns[np.argmax(f1_rfc_list)])
-                    best_features_rfc.remove(X_train.columns[np.argmax(f1_rfc_list)])
-                    rfc_score_improvement.append((max(f1_rfc_list), best_features_rfc))
-                    print("Best features rfc:", best_features_rfc)
+                    print("Best score rfc:", max(f1_rfc_list), X.columns[np.argmax(f1_rfc_list)])
+                    best_features_rfc.remove(X.columns[np.argmax(f1_rfc_list)])
+                    rfc_score_improvement.append((max(f1_rfc_list), set(best_features_rfc)))
+                    print(f"Current best features rfc: {best_features_rfc}\n")
                     features_mask_rfc[np.argmax(f1_rfc_list)] = False
                     f1_score_rfc_current_best = max(f1_rfc_list)
   
@@ -190,16 +212,43 @@ class WrapperMethods:
 
             else:
                 print("No improvements between previous score!")
+                end=timer()
+                print(f"Feature selection took: {end-start} s.")
                 break
-        
+
+        progress_gbc = {
+            "f1_score_gbc": [score for score, _ in gbc_score_improvement],
+            "features_num": [len(features) for _, features in gbc_score_improvement],
+            "features_gbc": [str(features) for _, features in gbc_score_improvement],
+        }
+
+        progress_rfc = {
+            "f1_score_rfc": [score for score, _ in rfc_score_improvement],
+            "features_num": [len(features) for _, features in rfc_score_improvement],
+            "features_rfc": [str(features) for _, features in rfc_score_improvement],
+
+        }
+
+        df_gbc = pd.DataFrame(data=progress_gbc)
+        df_rfc = pd.DataFrame(data=progress_rfc)
+        df_gbc.index += 1
+        df_rfc.index += 1
+
+        fig = line(df_gbc["f1_score_gbc"], title='Fitness backward elimination over iterations')
+        fig.write_html("fitness_backward_elimination.html")
+
+        with pd.ExcelWriter('progress_backward_elimination.xlsx') as writer:  
+            df_gbc.to_excel(writer, sheet_name='GBC')
+            df_rfc.to_excel(writer, sheet_name='RFC')
+
         metrics["GradientBoostClassifier"] = {"features" : best_features_gbc, "F1": f1_score_gbc_current_best}
         metrics["RandomForestClassifier"] = {"features": best_features_rfc, "F1": f1_score_rfc_current_best}
         return metrics, gbc_score_improvement, rfc_score_improvement
 
-    def rfe_method(self, X_train, X_test, Y_train, Y_test, limit_of_features) -> tuple:
-        mutual_info = mutual_info_classif(X_train, y_train)
+    def rfe_method(self, X, Y, limit_of_features) -> tuple:
+        mutual_info = mutual_info_classif(X, Y)
         mutual_info = pd.Series(mutual_info)
-        mutual_info.index = X_train.columns
+        mutual_info.index = X.columns
         mutual_info.sort_values(ascending=False).plot.bar()
         mutual_info = mutual_info.sort_values()
         current_features = len(mutual_info)
@@ -208,41 +257,69 @@ class WrapperMethods:
         
         metrics = {}
 
+        start = timer()
+
         while current_features > limit_of_features:
-            mutual_info = mutual_info_classif(X=X_train, y=y_train)
-            mutual_info = pd.Series(mutual_info, index=X_train.columns)
-            print(f"Current features:{X_train.columns}")
+            mutual_info = mutual_info_classif(X=X, y=Y)
+            mutual_info = pd.Series(mutual_info, index=X.columns)
+            print(f"Current features:{X.columns}")
             print(mutual_info.sort_values())
             print("Feature with lowest mutual information score:", mutual_info.idxmin())
-            X_train = X_train.drop(columns=mutual_info.idxmin())
-            X_test = X_test.drop(columns=mutual_info.idxmin())
+            X = X.drop(columns=mutual_info.idxmin())
             current_features = len(mutual_info)
 
-            self.gbc.fit(X=X_train, y=y_train)
-            self.rfc.fit(X=X_train, y=y_train)
-
-            preds_gbc = self.gbc.predict(X_test)
-            preds_rfc = self.rfc.predict(X_test)
-
-            accuracy_gbc = round(accuracy_score(y_test, preds_gbc), 3)
-            precision_gbc = round(precision_score(y_test, preds_gbc), 3)
-            recall_gbc = round(recall_score(y_test, preds_gbc), 3)
-            f1_gbc = round(f1_score(y_test, preds_gbc, average='weighted'), 3)
+            accuracy_gbc = np.mean(cross_val_score(self.gbc, X, Y, cv=5, scoring='accuracy'))
+            precision_gbc = np.mean(cross_val_score(self.gbc, X, Y, cv=5, scoring='precision'))
+            recall_gbc = np.mean(cross_val_score(self.gbc, X, Y, cv=5, scoring='recall'))
+            f1_gbc = np.mean(cross_val_score(self.gbc, X, Y, cv=5, scoring='f1_weighted'))
 
             print(f"Metrics for gradient boost classifier: accuracy:{accuracy_gbc}, precision:{precision_gbc}, recall:{recall_gbc}, f1:{f1_gbc}")
 
-            accuracy_rfc = round(accuracy_score(y_test, preds_rfc), 3)
-            precision_rfc = round(precision_score(y_test, preds_rfc), 3)
-            recall_rfc = round(recall_score(y_test, preds_rfc), 3)
-            f1_rfc = round(f1_score(y_test, preds_rfc, average='weighted'), 3)
+            accuracy_rfc = np.mean(cross_val_score(self.rfc, X, Y, cv=5, scoring='accuracy'))
+            precision_rfc = np.mean(cross_val_score(self.rfc, X, Y, cv=5, scoring='precision'))
+            recall_rfc = np.mean(cross_val_score(self.rfc, X, Y, cv=5, scoring='recall'))
+            f1_rfc = np.mean(cross_val_score(self.rfc, X, Y, cv=5, scoring='f1_weighted'))
 
             print(f"Metrics for random forest classifier: accuracy:{accuracy_rfc}, precision:{precision_rfc}, recall:{recall_rfc}, f1:{f1_rfc}")
 
-            progress_gbc.append((X_train.columns, accuracy_gbc, precision_gbc, recall_gbc, f1_gbc))
-            progress_rfc.append((X_train.columns, accuracy_rfc, precision_rfc, recall_rfc, f1_rfc))
+            progress_gbc.append((X.columns, accuracy_gbc, precision_gbc, recall_gbc, f1_gbc))
+            progress_rfc.append((X.columns, accuracy_rfc, precision_rfc, recall_rfc, f1_rfc))
+        
+        end = timer()
+        print(f"Feature selection took: {end-start} s.")
 
-        metrics["GradientBoostClassifier"] = {"features": X_train.columns, "Accuracy:" : accuracy_gbc, "Precision:" : precision_gbc, "Recall:" : recall_gbc, "F1 Score:" : f1_gbc}
-        metrics["RandomForestClassifier"] = {"features": X_train.columns, "Accuracy:" : accuracy_rfc, "Precision:" : precision_rfc, "Recall:" : recall_rfc, "F1 Score:" : f1_rfc}
+        gbc_data = {
+            "accuracy": [accuracy for _, accuracy, _, _, _  in progress_gbc],
+            "precision": [precision for _, _, precision, _, _ in progress_gbc],
+            "recall": [recall for _, _, _, recall, _ in progress_gbc],
+            "f1": [f1_best for _, _, _, _, f1_best in progress_gbc],
+            "features_num": [len(features) for features, _, _, _, _ in progress_gbc],
+            "features": [str(features) for features, _, _, _, _ in progress_gbc],
+        }
+
+        rfc_data = {
+            "accuracy": [accuracy for _, accuracy, _, _, _  in progress_rfc],
+            "precision": [precision for _, _, precision, _, _ in progress_rfc],
+            "recall": [recall for _, _, _, recall, _ in progress_rfc],
+            "f1": [f1_best for _, _, _, _, f1_best in progress_rfc],
+            "features_num": [len(features) for features, _, _, _, _ in progress_rfc],
+            "features": [features for features, _, _, _, _ in progress_rfc],
+        }
+
+        df_gbc = pd.DataFrame(data=gbc_data)
+        df_rfc = pd.DataFrame(data=rfc_data)
+        df_gbc.index += 1
+        df_rfc.index += 1
+
+        fig = line(df_gbc["f1"], title='Fitness RFE over iterations')
+        fig.write_html("fitness_rfe.html")
+
+        with pd.ExcelWriter('progress_rfe.xlsx') as writer:
+            df_gbc.to_excel(writer, sheet_name='GBC')
+            df_rfc.to_excel(writer, sheet_name='RFC')
+
+        metrics["GradientBoostClassifier"] = {"features": X.columns, "Accuracy:" : accuracy_gbc, "Precision:" : precision_gbc, "Recall:" : recall_gbc, "F1 Score:" : f1_gbc}
+        metrics["RandomForestClassifier"] = {"features": X.columns, "Accuracy:" : accuracy_rfc, "Precision:" : precision_rfc, "Recall:" : recall_rfc, "F1 Score:" : f1_rfc}
 
         return metrics, progress_gbc, progress_rfc
 
@@ -251,19 +328,12 @@ class WrapperMethods:
         print("Population generated!\n")
         return population
 
-    def calculate_fitness(self, features: pd.DataFrame, X_train: pd.DataFrame, y_train: pd.DataFrame, X_test: pd.DataFrame, Y_test: pd.DataFrame) -> tuple:
+    def calculate_fitness(self, features: pd.DataFrame, X: pd.DataFrame, Y: pd.DataFrame) -> tuple:
         feature_mask = features.astype(bool)
-        X_train_subset = X_train.loc[:, feature_mask]
-        X_test_subset = X_test.loc[:, feature_mask]
+        X_subset = X.loc[:, feature_mask]
 
-        self.gbc.fit(X_train_subset, y_train)
-        self.rfc.fit(X_train_subset, y_train)
-
-        preds_gbc = self.gbc.predict(X_test_subset)
-        preds_rfc = self.rfc.predict(X_test_subset)
-
-        f1_score_gbc_subset = round(f1_score(Y_test, preds_gbc, average='weighted'), 3)
-        f1_score_rfc_subset = round(f1_score(Y_test, preds_rfc, average='weighted'), 3)
+        f1_score_gbc_subset = np.mean(cross_val_score(self.gbc, X_subset, Y, cv=5, scoring='f1_weighted'))
+        f1_score_rfc_subset = np.mean(cross_val_score(self.rfc, X_subset, Y, cv=5, scoring='f1_weighted'))
         
         return f1_score_gbc_subset, f1_score_rfc_subset, features
 
@@ -327,67 +397,100 @@ class WrapperMethods:
     # Powinienem dac mozliwosc wyboru selekcji (jakas flaga)
     def run_genethic_algo(self, population_size, num_of_generations, features, filepath, target_col) -> tuple:
         best_fitness_score = 0
-        generations_fitness = {}
+        generations_best_fitness = {}
+        generations_individuals = []
+        list_individuals = []
          
         data = self.prepare_data(filepath=filepath)
     
-        X, Y, X_train, X_test, Y_train, Y_test = self.split_data(data=data, target_col=target_col)
+        X, Y = self.split_data(data=data, target_col=target_col)
     
         population = self.initialize_population(population_size, features)
     
         for i in range (num_of_generations):
             print("Fitness calculation !")
-            fitness_scores_list = [self.calculate_fitness(features, X_train, Y_train, X_test, Y_test) for features in tqdm(population, desc='Fitness Score Calculation Progress', colour = "green", leave=True)]
+            fitness_scores_list = [self.calculate_fitness(features, X, Y) for features in tqdm(population, desc='Fitness Score Calculation Progress', colour = "green", leave=True)]
 
             if np.max([score[0] for score in fitness_scores_list]) >= best_fitness_score:
                 best_fitness_score = np.max([score[0] for score in fitness_scores_list]) # gbc F1 [0], rfc F1 [1]
                 best_individual = fitness_scores_list[np.argmax([score[0] for score in fitness_scores_list])][2] # index of best fitness score and second element of tuple cause it is binary mask
-                
-        
+            
             fitness_scores_dict = {i + 1: score for i, score in enumerate(fitness_scores_list)}
+            generations_individuals.append(fitness_scores_dict)
             print("DICT:", fitness_scores_dict)
             print("\nNajlepszy wynik dla generacji nr :", i+1 , "to :", np.max([score[0] for score in fitness_scores_list]))
-            generations_fitness[i+1] = {"Score": np.max([score[0] for score in fitness_scores_list])}
+
+
+            mask = fitness_scores_list[np.argmax([score[0] for score in fitness_scores_list])][2].astype(bool)
+            best_features = X.loc[:, mask]
+            
+            generations_best_fitness[i+1] = {"Score GBC": np.max([score[0] for score in fitness_scores_list]), 
+                                        "Score RFC": np.max([score[1] for score in fitness_scores_list]),
+                                        "Best features:": best_features.columns.to_list()
+                                       }
+            
+            print("GENERATIONS FITNESS: ", generations_best_fitness)
+            
             fitness_scores_sum = sum(score[0] for score in fitness_scores_list)
             individ = {}
             output_prob = self.calculate_individual_probabilities(individ, fitness_scores_list, fitness_scores_sum)
-            #selected_population = self.selection_roulette_ga(population , population_size, output_prob)
-            selected_population = self.selection_tournament_ga(population, 3, fitness_scores_dict)
+            selected_population = self.selection_roulette_ga(population , population_size, output_prob)
+            #selected_population = self.selection_tournament_ga(population, 3, fitness_scores_dict)
             next_gen = self.uniform_crossover(selected_population, population_size)
             next_gen_mutated = self.mutation(next_gen, selected_population)
             population = next_gen_mutated
             print("Najlepszy fitness score", best_fitness_score)
 
-        mask = best_individual.astype(bool)
-        best_features = X_test.loc[:, mask]
-        selected_features = best_features.columns.to_list()
-        return best_fitness_score, selected_features, generations_fitness
+        for generation_data in generations_individuals:
+            fitness_values = [fitness_data[0] for fitness_data in generation_data.values()]
+            list_individuals.append(fitness_values)
+
+        df_generations = pd.DataFrame(list_individuals).transpose()
+        df_generations.columns = [f"generation {i}" for i in range(1, len(list_individuals) + 1)]
+        df_generations.index = [f"individal {i}" for i in range(1, len(list_individuals[0]) + 1)]
+
+        df_generations.to_excel("individuals_over_generations.xlsx", index=True)
+
+        df_best_generations = pd.DataFrame(data=generations_best_fitness).T
+        df_best_generations.to_excel("best_generations.xlsx", index=True)
+        print(df_best_generations)
+
+        fig = line(df_generations, title='Fitness over Generations')
+        fig.write_html("fitness_over_generations.html")
+
+        fig2 = line(df_best_generations, x=df_best_generations.index, y=['Score GBC', 'Score RFC'], title='Best fitness over generations')
+        fig2.write_html("best_fitness_over_generations.html")
+        return best_fitness_score, best_individual
 
     def generate_pheromone_array(self, num_features, value) -> None:
         pheromone_array = np.full(num_features, value)
         return pheromone_array
     
-    def generate_ant_population(self, ants_colony_size, num_features) -> None:
+    def generate_ant_population(self, ants_colony_size, num_features, history_of_moves: list, generation) -> tuple:
         ants = np.zeros(shape=(ants_colony_size, num_features), dtype=int)
+        generation_data = []
         for ant in ants:
             random_node_index = self.rng.integers(0, num_features-1)
             ant[random_node_index] = 1
-        print("Ants generated!\n")
-        return ants
+            generation_data.append([random_node_index+1])
 
-    def roulette_wheel_selection_aco(self, probabilities, num_candidates) -> None:
-        print("\nProblities:\n", probabilities)
+        if not history_of_moves:
+            history_of_moves.append({})
+        elif generation + 1 not in history_of_moves[0]:
+            history_of_moves[0][generation + 1] = []
+          
+        history_of_moves[0][generation + 1] = generation_data
+
+        return ants, history_of_moves
+
+    def roulette_wheel_selection_aco(self, probabilities, num_candidates) -> int:
         cumulative_probabilities = list(accumulate(probabilities, operator.add))
-        print("\nCumulative probabilities: \n", cumulative_probabilities)
-        selected_index = np.searchsorted(cumulative_probabilities, np.random.rand()) % num_candidates
+        selected_index = np.searchsorted(cumulative_probabilities, self.rng.random()) % num_candidates
         return selected_index
 
-    def ants_make_move(self, ants_population, pheromone_array, weights, alpha, beta) -> None:
+    def ants_make_move(self, ants_population, pheromone_array, weights, generation, history_of_moves: list, alpha, beta) -> tuple:
         for ant_index in range(len(ants_population)):
             current_ant = ants_population[ant_index]
-
-            print("\nAnt {}:".format(ant_index + 1))
-            print(current_ant)
 
             # Calculate the sum of probabilities for normalization
             total_probability = np.sum((pheromone_array[current_ant == 0] ** alpha) * (weights[current_ant == 0] ** beta))
@@ -401,61 +504,82 @@ class WrapperMethods:
                     probabilities_for_each_candidate[j] = probability
 
             selected_feature_index = self.roulette_wheel_selection_aco(probabilities_for_each_candidate, len(probabilities_for_each_candidate))
-            print("Selected Feature Index:", selected_feature_index)
-            print()
             current_ant[selected_feature_index] = 1
-            print("Ant selected:\n", current_ant)
-            print()
+            # Append the selected feature index to the sublist corresponding to the current ant index under the key representing the generation
+            history_of_moves[0][generation+1][ant_index].append(selected_feature_index+1)
 
-        return ants_population
+        return ants_population, history_of_moves
 
     def update_pheromones(self, pheromone_array, ants_population: list, quality_measure, evaporation_rate=0.1) -> None:
         pheromone_array *= (1 - evaporation_rate)
-        print(ants_population)
+
         for ant_index, ant in enumerate(ants_population):
             for j in range(len(ant)):
-                print(ant[j])
                 if ant[j] == 1:
                     pheromone_array[j] += quality_measure[ant_index][0]
         return pheromone_array
 
-    def aco_run(self, X_train, X_test, Y_train, Y_test, base_pheromone_value, ants_colony_size, ant_generations, ants_moves, alpha, beta) -> tuple:
-        mutual_info = mutual_info_classif(X_train, Y_train)
+    def aco_run(self, X, Y, base_pheromone_value, ants_colony_size, ant_generations, ants_moves, alpha, beta) -> tuple:
+        start = timer()
+        mutual_info = mutual_info_classif(X, Y)
         best_fitness_score = 0
+        history = []
+        best_ant = []
+        best_ants =[]
+
         weights = np.array(mutual_info)
-        print(len(mutual_info))
         pheromone_array = self.generate_pheromone_array(len(mutual_info), base_pheromone_value)
-        print("\nWagi:\n",weights)
-        print("\nInitial pheromone_array: \n", pheromone_array)
 
-
-        for _ in range(ant_generations):
-            ants = self.generate_ant_population(ants_colony_size, len(mutual_info))
+        for generation in range(ant_generations):
+            ants, history_of_moves = self.generate_ant_population(ants_colony_size, len(mutual_info), history, generation)
             for _ in range(ants_moves): 
-                ants_population_after_move = self.ants_make_move(ants, pheromone_array=pheromone_array, weights=weights, alpha=alpha, beta=beta)
-                print(ants_population_after_move)
-                fitness_scores_ants = [self.calculate_fitness(features, X_train, Y_train, X_test, Y_test) for features in tqdm(ants_population_after_move, desc='Fitness Score Calculation Progress', colour = "green", leave=True)]
+                ants_population_after_move, history_of_moves = self.ants_make_move(ants, pheromone_array=pheromone_array, weights=weights, generation=generation, history_of_moves=history_of_moves, alpha=alpha, beta=beta)
+                print("Ant population after move:", ants_population_after_move)
+                fitness_scores_ants = [self.calculate_fitness(features, X, Y) for features in tqdm(ants_population_after_move, desc='Fitness Score Calculation Progress', colour = "green", leave=False)]
 
                 if np.max([score[0] for score in fitness_scores_ants]) >= best_fitness_score:
+                    best_fitness_index = np.argmax([score[0] for score in fitness_scores_ants])
                     best_fitness_score = np.max([score[0] for score in fitness_scores_ants]) # gbc F1 [0], rfc F1 [1]
-                    best_individual = fitness_scores_ants[np.argmax([score[0] for score in fitness_scores_ants])][2] # index of best fitness score and second element of tuple cause it is binary mask
+                    best_ant = fitness_scores_ants[best_fitness_index][2].copy() # index of best fitness score and second element of tuple cause it is binary mask
+                    best_ant_mask = best_ant.astype(bool)
+                    best_ant_path = history_of_moves[0][generation + 1][best_fitness_index].copy()
+                    print(f"Best fitness index: {best_fitness_index}\n Best score: {best_fitness_score}\n Best ant path: {best_ant_path}\n Best ant mask:{best_ant}")
+                    best_ants.append((best_fitness_score, best_ant, best_ant_path, X.loc[:, best_ant_mask].columns, len(best_ant_path)))
+                    
+                self.update_pheromones(pheromone_array, ants_population_after_move, fitness_scores_ants)
+                history = history_of_moves
+                print(history)
+            print("Best ant:", best_ant)
 
-                updated_pheromones = self.update_pheromones(pheromone_array, ants_population_after_move, fitness_scores_ants)
-                print("\nUpdated Pheromone Levels:\n", updated_pheromones)
-                print("\nNew ants population\n:", ants_population_after_move)
+        end = timer()
+        print(f"Feature selection with Ant Colony Optimization took: {end-start}s.")
 
-        return best_individual, best_fitness_score
+        df_ants = pd.DataFrame(best_ants, columns=["best_fitness_score", "best_ant", "best_ant_path", "features", "features_num"])
+        df_ants.index += 1
+        df_ants.to_excel("best_ants.xlsx", index=True)
+        fig = line(df_ants['best_fitness_score'], title='Fitness of best ants during feature selection')
+        fig.write_html("fitness_over_ants.html")
+        edges = [(best_ant_path[i], best_ant_path[i+1]) for i in range(len(best_ant_path) - 1)]
+
+        G = nx.DiGraph(directed=True)
+        nx.circular_layout(G)
+        G.add_edges_from(edges)
+        nx.draw_networkx(G, with_labels=True, node_color='skyblue', arrowsize=20)
+        plt.savefig("best_ant_graph.png")
+
+        return best_ant, best_ant_path, best_fitness_score, history
 
 instance = WrapperMethods()
 data = instance.prepare_data("/Users/patrykjaworski/Documents/Projekty/Feature-Selection/TESTY/Old/data.csv")
 print(data)
-X, Y, X_train, X_test, y_train, y_test = instance.split_data(data, "diagnosis")
-# best_columns, improvement_gbc, improvement_rfc = instance.forward_selection_method(X_train, X_test, y_train, y_test)
+X, Y = instance.split_data(data, "diagnosis")
+#best_columns, improvement_gbc, improvement_rfc = instance.forward_selection_method(X, Y)
 # print(f"Best columns: {best_columns}, improvement_gbc: {improvement_gbc}, improvement_rfc: {improvement_rfc}")
-# best_columns, improvement_gbc, improvement_rfc = instance.backward_elimination_method(X_train, X_test, y_train, y_test)
+#best_columns, improvement_gbc, improvement_rfc = instance.backward_elimination_method(X, Y)
 # print(f"Best columns: {best_columns} \n improvement_gbc: {improvement_gbc} \n improvement_rfc: {improvement_rfc}")
-#best_score, best_osobnik, generations_dict = instance.run_genethic_algo(30, 5, 30,"/Users/patrykjaworski/Documents/Projekty/Feature-Selection/TESTY/Old/data.csv",'diagnosis')
-# best_individ, score = instance.aco_run(X_train, X_test, y_train, y_test, base_pheromone_value=0.25, ants_colony_size=3, ant_generations=3, ants_moves=5, alpha=1, beta=2)
-# print(best_individ, score)
-metrics, improvement_gbc, improvement_rfc = instance.rfe_method(X_train, X_test, y_train, y_test, 18)
+#best_score, best_osobnik = instance.run_genethic_algo(15, 50, 30,"/Users/patrykjaworski/Documents/Projekty/Feature-Selection/TESTY/Old/data.csv",'diagnosis')
+# print(best_score, best_osobnik)
+ant, ant_path, score, history = instance.aco_run(X, Y, base_pheromone_value=0.25, ants_colony_size=30, ant_generations=4, ants_moves=30, alpha=1, beta=2)
+#print(ant, ant_path, score)
+#metrics, improvement_gbc, improvement_rfc = instance.rfe_method(X, Y, 5)
 
